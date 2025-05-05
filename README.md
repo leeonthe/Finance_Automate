@@ -8,7 +8,7 @@
 
 ## Introduction
 
-Reconciling monthly autopayment charges against a large volume of credit‑card transactions has long been a bottleneck for our finance team. Each period, our finance team receive a single autopayment posting—for example, \$73,948.09—but our ledger contains dozens of individual entries (purchases, refunds, and pending disputes) that must collectively match this amount. Manually inspecting hundreds of line items to find the exact combination of debits and credits is both time‑consuming and error‑prone.
+Reconciling monthly autopayment charges against a large volume of credit-card transactions has long been a bottleneck for our finance team. Each period, our finance team receive a single autopayment posting—for example, \$73,948.09—but our ledger contains dozens of individual entries (purchases, refunds, and pending disputes) that must collectively match this amount. Manually inspecting hundreds of line items to find the exact combination of debits and credits is both time-consuming and error-prone.
 
 ## Real-World Application: Credit-Card Autopayment Reconciliation
 
@@ -27,8 +27,6 @@ Because any subset of the **n** transactions might sum to the target, a brute-fo
 ```
 
 possible subsets—impossible even for **n≈50** (\~2^50 ≈ 10^15 subsets).
-
-###
 
 ---
 
@@ -61,7 +59,7 @@ If fewer than `K` exist, return them all.
 
 * `1 ≤ len(numbers) ≤ 50`
 * Each string’s length ≤ 20
-* After stripping `$` and commas, values fit in a 32‑bit signed integer (in cents)
+* After stripping `$` and commas, values fit in a 32-bit signed integer (in cents)
 * `0 ≤ len(mustInclude) ≤ 10`
 * `1 ≤ K ≤ 100`
 
@@ -147,16 +145,16 @@ indexOffset = 1
 Instead of O(2^n), we:
 
 * **Scale** each transaction and the target into integer “cents” (so all values are ints).
-* **Build a bitset DP** of size:
+* **Build a bitset DP** (`suffix_dp[i]`) of size:
 
   ```text
   Range = (sum of positives) - (sum of negatives)
   ```
 
-  marking which sums are reachable in O(n×Range) time.
-* **Prune** any backtracking branch that the DP shows can’t reach the target.
+  marking which sums are reachable using items **i..n-1** in O(n×Range) time.
+* **Prune** any backtracking branch whose remaining items can’t reach the needed sum.
 
-This turns subset-sum decision into a **pseudo-polynomial** O(nT) algorithm, where T is the target in cents (e.g. 7,240,953 ¢). In practice, with n≈50 and T≲10^7, that’s just a few hundred million bit-operations—entirely feasible.
+This turns subset-sum decision into a **pseudo-polynomial** O(n T) algorithm, where T is the target in cents (e.g. 7,240,953 ¢). In practice, with n≈50 and T≲10^7, that’s just a few hundred million bit-operations—entirely feasible.
 
 **Why “Top K Longest” Helps**
 
@@ -187,83 +185,143 @@ Some transactions must **not** be reconciled yet (e.g. pending disputes). We lis
   O(n × T)
   ```
 
-  where T = target in integer cents. This is pseudo-polynomial, much faster for moderate T.
+  where T = target in cents. This is pseudo-polynomial, much faster for moderate T.
 
-* **Pruned enumeration:** only explores branches that DP proves could reach the target. In many real datasets this cuts the search tree from **2^n** to a tiny fraction—often just a few thousand branches.
+* **Pruned enumeration:** only explores branches that DP proves could reach the target—often reducing 2^n to a small fraction.
 
-* **Top-K stop:** generate combinations in descending size and halt after K matches.
+* **Top-K stop:** backtracking halts as soon as K matches are found.
+
+---
 
 ### Approach
 
 1. **Parse strings → integer cents**: strip `$`/commas, `float()`, then `int(round(...*100))`.
-2. **Validate **`mustInclude`**: ensure each required value exists sufficiently in `numbers`.
-3. **DP bitset for reachability**: build a prefix bitset to quickly test if a partial sum is possible.
-4. **Backtrack by descending length**: generate combinations of size `r=n..1`, prune with DP and `mustInclude`, stop after `K` matches.
+2. **Validate `mustInclude`**: ensure each required value exists sufficiently in `numbers`.
+3. **Build suffix-DP bitsets** for reachability on suffixes `i..n-1`.
+4. **Backtrack with pruning**: recursively include/exclude each index, but skip any branch whose remaining suffix-DP bitset says target unreachable.
+5. **Collect & sort** all valid combos by length descending; take top K.
+6. **Format** as list of dicts with `used`, `unused`, `length`, and `sum`.
 
-This guarantees the first `K` found are the longest, with no need to sort at the end.
+---
 
 ### Code
 
 ```python
-import re
 import itertools
 from collections import Counter
+from typing import List, Dict, Any, Optional
 
-class Solution:
-    def topKLongest(self, target: str, mustInclude: List[str], numbers: List[str],
-                    K: int, indexOffset: int) -> List[Dict[str, Any]]:
-        def parse_number(s):
-            clean = s.replace('$','').replace(',','')
-            try: return float(clean)
-            except: return None
-        def to_cents(s):
-            v = parse_number(s)
-            return None if v is None else int(round(v*100))
+def parse_number(s: str) -> Optional[float]:
+    clean = s.replace('$', '').replace(',', '').strip()
+    try:
+        return float(clean)
+    except ValueError:
+        return None
 
-        # parse target
-        t = parse_number(target);
-        target_c = int(round(t*100))
-        # parse mustInclude
-        req = Counter();
-        for s in mustInclude:
-            c = to_cents(s)
-            req[c]+=1
-        # parse numbers pool
-        nums, orig = [], []
-        for s in numbers:
-            c = to_cents(s)
-            if c is not None:
-                nums.append(c); orig.append(s)
-        n = len(nums)
-        # verify requirements
-        pool = Counter(nums)
-        for v,cnt in req.items():
-            if pool[v] < cnt: return []
-        # build DP bitsets
-        min_sum = sum(v for v in nums if v<0)
-        max_sum = sum(v for v in nums if v>0)
-        offset = -min_sum
-        size = max_sum-min_sum
-        mask = (1<<(size+1))-1
-        dp=[0]*(n+1); dp[0]=1<<offset
-        for i in range(1,n+1):
-            p=dp[i-1]; v=nums[i-1]
-            dp[i] = p|((p<<v)&mask) if v>=0 else p|(p>>(-v))
-        # backtrack descending length
-        res=[]; found=0
-        for r in range(n,0,-1):
-            for combo in itertools.combinations(range(n),r):
-                # mustInclude check
-                cc = Counter(nums[i] for i in combo)
-                if any(cc[v]<cnt for v,cnt in req.items()): continue
-                # sum check
-                if sum(nums[i] for i in combo)!=target_c: continue
-                used=[i+indexOffset for i in combo]
-                unused=[i+indexOffset for i in range(n) if i not in combo]
-                res.append({'used':used,'unused':unused,'length':r,'sum':t})
-                found+=1
-                if found>=K: return res
-        return res
+def to_cents(s: str) -> Optional[int]:
+    v = parse_number(s)
+    return None if v is None else int(round(v * 100))
+
+def top_k_longest(
+    target: str,
+    must_include: List[str],
+    numbers: List[str],
+    K: int,
+    index_offset: int
+) -> List[Dict[str, Any]]:
+    # 1. Parse target
+    t = parse_number(target)
+    if t is None:
+        return []
+    target_c = int(round(t * 100))
+
+    # 2. Parse must-include values
+    req = Counter()
+    for s in must_include:
+        c = to_cents(s)
+        if c is None:
+            return []
+        req[c] += 1
+
+    # 3. Parse available numbers
+    nums: List[int] = []
+    orig: List[str] = []
+    for s in numbers:
+        c = to_cents(s)
+        if c is not None:
+            nums.append(c)
+            orig.append(s)
+    n = len(nums)
+    if n == 0:
+        return []
+
+    # 4. Verify must-include availability
+    pool = Counter(nums)
+    for v, cnt in req.items():
+        if pool[v] < cnt:
+            return []
+
+    # 5. Build suffix DP bitsets for pruning
+    min_sum = sum(v for v in nums if v < 0)
+    max_sum = sum(v for v in nums if v > 0)
+    offset = -min_sum
+    size = max_sum - min_sum
+    mask = (1 << (size + 1)) - 1
+
+    suffix_dp = [0] * (n + 1)
+    suffix_dp[n] = 1 << offset
+    for i in range(n - 1, -1, -1):
+        p = suffix_dp[i + 1]
+        v = nums[i]
+        if v >= 0:
+            suffix_dp[i] = p | ((p << v) & mask)
+        else:
+            suffix_dp[i] = p | (p >> -v)
+
+    # 6. Backtracking with DP pruning
+    results: List[List[int]] = []
+
+    def dfs(idx: int, current_sum: int, combo: List[int]):
+        # Hit exact target: record if must-include satisfied
+        if current_sum == target_c:
+            cc = Counter(nums[i] for i in combo)
+            if all(cc[v] >= cnt for v, cnt in req.items()):
+                results.append(combo.copy())
+            return
+        # Exhausted items
+        if idx == n:
+            return
+        # Prune impossible suffix
+        rem = target_c - current_sum
+        pos = rem + offset
+        if pos < 0 or pos > size or ((suffix_dp[idx] >> pos) & 1) == 0:
+            return
+        # Include
+        combo.append(idx)
+        dfs(idx + 1, current_sum + nums[idx], combo)
+        combo.pop()
+        # Exclude
+        dfs(idx + 1, current_sum, combo)
+
+    dfs(0, 0, [])
+
+    # 7. Select top K by length descending
+    results.sort(key=lambda c: len(c), reverse=True)
+    topk = results[:K]
+
+    # 8. Format output
+    output: List[Dict[str, Any]] = []
+    for combo in topk:
+        used = [i + index_offset for i in combo]
+        unused = [i + index_offset for i in range(n) if i not in combo]
+        output.append({
+            "used": used,
+            "unused": unused,
+            "length": len(combo),
+            "sum": t
+        })
+
+    return output
 ```
 
 ---
@@ -273,104 +331,35 @@ class Solution:
 **Definitions**
 
 Let \$S = \[n\_1, \dots, n\_n]\$ be the multiset of input values (in cents).
-
 Let \$M\$ be the multiset of must-include values.
-
 Let \$T\$ be the target sum (in cents).
-
-A combination of size \$r\$ is any \$r\$-element subset of indices \${i\_1, \dots, i\_r} \subseteq {1, \dots, n}\$.
-
-Denote by \$\Sigma(C)=\sum\_{i\in C} n\_i\$ the sum of values in combination \$C\$.
-
-We say \$C\$ is valid iff (a) \$M \subseteq C\$ (with multiplicity) and (b) \$\Sigma(C)=T\$.
+A combination of size \$r\$ is any \$r\$-element subset of indices \${i\_1, \dots, i\_r}\subseteq{1,\dots,n}\$.
+Denote \$\Sigma(C)=\sum\_{i\in C}n\_i\$.
+We say \$C\$ is **valid** iff (a) \$M\subseteq C\$ (multiplicity) and (b) \$\Sigma(C)=T\$.
 
 ---
 
-## Theorem 1 (Completeness)
+#### Theorem 1 (Exhaustive Reachability via DP)
 
-The algorithm will eventually consider every size-\$r\$ subset \$C\subseteq{1,\dots,n}\$.
+For each \$i\$, `suffix_dp[i]` has a 1-bit at position `offset+x` **iff** some subset of items \$i..n-1\$ can sum to \$x\$.  ∎
 
-**Proof.**
-It loops:
+#### Theorem 2 (Pruning Soundness)
 
-```
-for combo in itertools.combinations(range(n), r):
-```
+At call `dfs(idx,current_sum)`, if `suffix_dp[idx]` has no 1-bit at `offset+(T-current_sum)`, **no** suffix subset can complete to target. Pruning never discards a valid combo.  ∎
 
-By definition, `itertools.combinations(range(n), r)` enumerates all \$\binom{n}{r}\$ subsets of size \$r\$ exactly once.
-∎
+#### Theorem 3 (Completeness & Ordering)
 
----
-
-## Lemma 2 (Must-Include Pruning)
-
-Invalid combinations (those missing any element of \$M\$) are skipped, but no valid combination is ever skipped.
-
-**Proof Sketch.**
-We build a `Counter` of the chosen subset and compare to `must_counter`.
-If any required element’s count is too low, we `continue`.
-Conversely, if \$M\subseteq C\$, the guard passes, so no valid \$C\$ is filtered out.
-∎
+* **Exhaustiveness**: DFS visits every prefix unless pruned.
+* **Validity**: Only records combos summing to \$T\$ with all required values.
+* **Ordering**: Sort by length descending ensures top-K longest.  ∎
 
 ---
 
-## Theorem 3 (Ordering by Length)
+### Complexity
 
-The first \$K\$ emitted combinations are the \$K\$ longest valid subsets.
-
-**Proof.**
-
-```pseudo
-found ← 0
-for r in n, n−1, …, 1:
-  for each combo of size r:
-    if valid(combo):
-      emit(combo)
-      if found+1 = K: stop
-```
-
-* **Invariant I₁**: Before entering size=\$r\$, all valid combos of size >\$r\$ have been emitted or checked.
-* Therefore, when the first valid combo of size \$r\$ is emitted, no larger valid combo can appear later.
-* We stop after \$K\$ emissions, so we have exactly the top-\$K\$ by size.
-  ∎
+* **DP building:** \$O(nT)\$ bit-ops
+* **DFS w/ pruning:** visits \$O(nT)\$ reachable states
+* **Overall:** Pseudo-polynomial \$O(nT)\$ vs brute \$O(n2^n)\$
+* **Space:** \$O(nT)\$ bits + \$O(n)\$ recursion
 
 ---
-
-## Theorem 4 (Termination & Bound on Emitted Count)
-
-The algorithm halts after at most \$\sum\_{r=1}^n \binom{n}{r}\$ iterations, or sooner once \$K\$ combos are found.
-
-**Proof.**
-
-* The outer loop runs \$n\$ times.
-* The inner loop for size \$r\$ runs \$\binom{n}{r}\$ times.
-* A global counter `found` is incremented on each emission.
-* Once `found == K`, both loops break.
-  ∎
-
----
-
-## Complexity
-
-* **Time (worst-case):**
-  \$\displaystyle \sum\_{r=1}^n \binom{n}{r} \bigl(O(r)\text{ for must-include} + O(r)\text{ for sum}\bigr)=O(n2^n).\$
-
-* **Space:**
-  \$O(n)\$ extra (input arrays + one combination).
-
----
-
-## Pseudocode with Loop Invariants
-
-```pseudo
-found ← 0
-for r from n down to 1:                             // Invariant: sizes >r are done
-  for each combo ∈ Combinations(range(n), r):      // Invariant: each size-r subset visited once
-    if combo contains M and sum(combo)=T:
-      emit(combo)
-      found ← found+1
-      if found = K: return                          // emit exactly K
-```
-
-* **Invariant A:** Before emitting, no larger valid combo remains un-emitted.
-* **Invariant B:** No duplicates are emitted (combination enumeration uniqueness).
