@@ -6,6 +6,32 @@
 
 ---
 
+## Introduction
+
+Reconciling monthly autopayment charges against a large volume of credit‑card transactions has long been a bottleneck for our finance team. Each period, our finance team receive a single autopayment posting—for example, \$73,948.09—but our ledger contains dozens of individual entries (purchases, refunds, and pending disputes) that must collectively match this amount. Manually inspecting hundreds of line items to find the exact combination of debits and credits is both time‑consuming and error‑prone.
+
+## Real-World Application: Credit-Card Autopayment Reconciliation
+
+Every month your company’s billing system records a set of credit-card transactions:
+
+```
+[-56.94, -35.00, 1022.12, 8799.98, 47.94, …]
+```
+
+Meanwhile your autopayment gateway charges a fixed autopayment amount, e.g. **\$72,409.53**. Your goal is to **match** (and then remove) exactly those transactions that sum to the autopayment total.
+
+Because any subset of the **n** transactions might sum to the target, a brute-force search would require checking
+
+```
+2^n
+```
+
+possible subsets—impossible even for **n≈50** (\~2^50 ≈ 10^15 subsets).
+
+###
+
+---
+
 ## Problem Statement
 
 You are given:
@@ -55,6 +81,8 @@ class Solution:
     ) -> List[Dict[str, Any]]:
         pass
 ```
+
+---
 
 ## Example Test Cases
 
@@ -114,10 +142,61 @@ indexOffset = 1
 
 ## Solution
 
+**Pseudo-Polynomial DP to the Rescue**
+
+Instead of O(2^n), we:
+
+* **Scale** each transaction and the target into integer “cents” (so all values are ints).
+* **Build a bitset DP** of size:
+
+  ```text
+  Range = (sum of positives) - (sum of negatives)
+  ```
+
+  marking which sums are reachable in O(n×Range) time.
+* **Prune** any backtracking branch that the DP shows can’t reach the target.
+
+This turns subset-sum decision into a **pseudo-polynomial** O(nT) algorithm, where T is the target in cents (e.g. 7,240,953 ¢). In practice, with n≈50 and T≲10^7, that’s just a few hundred million bit-operations—entirely feasible.
+
+**Why “Top K Longest” Helps**
+
+Even after pruning, there may be many valid subsets. We actually want to:
+
+* **Delete** as many matching transactions as possible each month
+* **Roll over** the leftover transactions (e.g. refunds, chargebacks) into next month’s reconciliation
+
+So we ask for the **top K longest** subsets (those that consume the most transactions). By removing those, we minimize the number of un-matched transactions we carry forward.
+
+**Handling Carry-Forwards with “Must-Include”**
+
+Some transactions must **not** be reconciled yet (e.g. pending disputes). We list them in a **MUST INCLUDE** set—these values are forced into every subset. In effect, they become part of the target-sum equation rather than optional matches.
+
+**Mathematical Summary**
+
+* **Total subsets** of n items:
+
+  ```text
+  |P({1,…,n})| = 2^n
+  ```
+
+  Exponential in n.
+
+* **DP reachability:**
+
+  ```text
+  O(n × T)
+  ```
+
+  where T = target in integer cents. This is pseudo-polynomial, much faster for moderate T.
+
+* **Pruned enumeration:** only explores branches that DP proves could reach the target. In many real datasets this cuts the search tree from **2^n** to a tiny fraction—often just a few thousand branches.
+
+* **Top-K stop:** generate combinations in descending size and halt after K matches.
+
 ### Approach
 
 1. **Parse strings → integer cents**: strip `$`/commas, `float()`, then `int(round(...*100))`.
-2. **Validate `mustInclude`**: ensure each required value exists sufficiently in `numbers`.
+2. **Validate **`mustInclude`**: ensure each required value exists sufficiently in `numbers`.
 3. **DP bitset for reachability**: build a prefix bitset to quickly test if a partial sum is possible.
 4. **Backtrack by descending length**: generate combinations of size `r=n..1`, prune with DP and `mustInclude`, stop after `K` matches.
 
@@ -187,105 +266,111 @@ class Solution:
         return res
 ```
 
-##
+---
+
+### Correctness Proof
+
+**Definitions**
+
+Let \$S = \[n\_1, \dots, n\_n]\$ be the multiset of input values (in cents).
+
+Let \$M\$ be the multiset of must-include values.
+
+Let \$T\$ be the target sum (in cents).
+
+A combination of size \$r\$ is any \$r\$-element subset of indices \${i\_1, \dots, i\_r} \subseteq {1, \dots, n}\$.
+
+Denote by \$\Sigma(C)=\sum\_{i\in C} n\_i\$ the sum of values in combination \$C\$.
+
+We say \$C\$ is valid iff (a) \$M \subseteq C\$ (with multiplicity) and (b) \$\Sigma(C)=T\$.
 
 ---
 
-## Introduction
+## Theorem 1 (Completeness)
 
-Reconciling monthly autopayment charges against a large volume of credit‑card transactions has long been a bottleneck for our finance team. Each period, our finance team receive a single autopayment posting—for example, \$73,948.09—but our ledger contains dozens of individual entries (purchases, refunds, and pending disputes) that must collectively match this amount. Manually inspecting hundreds of line items to find the exact combination of debits and credits is both time‑consuming and error‑prone.
+The algorithm will eventually consider every size-\$r\$ subset \$C\subseteq{1,\dots,n}\$.
 
-To streamline and automate this reconciliation, I developed a tool that efficiently identifies the longest transaction subsets summing to the target payment—removing as many matching records as possible while carrying forward only the unresolved items. The following sections describe the mathematical challenge and our optimized DP-pruned solution.
-
-## Real-World Application: Credit-Card Autopayment Reconciliation: Credit-Card Autopayment Reconciliation: Credit-Card Autopayment Reconciliation
-
-### The Problem
-
-Every month your company’s billing system records a set of credit-card transactions:
+**Proof.**
+It loops:
 
 ```
-[-56.94, -35.00, 1022.12, 8799.98, 47.94, …]
+for combo in itertools.combinations(range(n), r):
 ```
 
-Meanwhile your autopayment gateway charges a fixed autopayment amount, e.g. **\$72,409.53**. Your goal is to **match** (and then remove) exactly those transactions that sum to the autopayment total.
+By definition, `itertools.combinations(range(n), r)` enumerates all \$\binom{n}{r}\$ subsets of size \$r\$ exactly once.
+∎
 
-Because any subset of the **n** transactions might sum to the target, a brute-force search would require checking
+---
 
-```
-2^n
-```
+## Lemma 2 (Must-Include Pruning)
 
-possible subsets—impossible even for **n≈50** (\~2^50 ≈ 10^15 subsets).
+Invalid combinations (those missing any element of \$M\$) are skipped, but no valid combination is ever skipped.
 
-### Pseudo-Polynomial DP to the Rescue
+**Proof Sketch.**
+We build a `Counter` of the chosen subset and compare to `must_counter`.
+If any required element’s count is too low, we `continue`.
+Conversely, if \$M\subseteq C\$, the guard passes, so no valid \$C\$ is filtered out.
+∎
 
-Instead of O(2^n), we:
+---
 
-1. **Scale** each transaction and the target into integer “cents” (so all values are ints).
-2. Build a **bitset DP** of size:
+## Theorem 3 (Ordering by Length)
 
-   ```text
-   Range = (sum of positives) - (sum of negatives)
-   ```
+The first \$K\$ emitted combinations are the \$K\$ longest valid subsets.
 
-   marking which sums are reachable in O(n×Range) time.
-3. **Prune** any backtracking branch that the DP shows can’t reach the target.
+**Proof.**
 
-This turns subset-sum decision into a **pseudo-polynomial** O(nT) algorithm, where **T** is the target in cents (e.g. 7,240,953 ¢). In practice, with **n≈50** and **T≲10^7**, that’s just a few hundred million bit-operations—entirely feasible.
-
-### Why “Top K Longest” Helps
-
-Even after pruning, there may be **many** valid subsets. We actually want to:
-
-* **Delete** as many matching transactions as possible each month
-* **Roll over** the leftover transactions (e.g. refunds, chargebacks) into next month’s reconciliation
-
-So we ask for the **top K longest** subsets (those that consume the most transactions). By removing those, we minimize the number of un-matched transactions we carry forward.
-
-### Handling Carry-Forwards with “Must-Include”
-
-Some transactions must **not** be reconciled yet (e.g. pending disputes). We list them in a **MUST INCLUDE** set—these values are forced into every subset. In effect, they become part of the target-sum equation rather than optional matches.
-
-### Mathematical Summary
-
-* **Total subsets** of n items:
-
-  ```text
-  |P({1,…,n})| = 2^n
-  ```
-
-  Exponential in n.
-
-* **DP reachability**:
-
-  ```text
-  O(n × T)
-  ```
-
-  where T = target in integer cents. This is pseudo-polynomial, much faster for moderate T.
-
-* **Pruned enumeration**: only explores branches that DP proves could reach the target. In many real datasets this cuts the search tree from **2^n** to a tiny fraction—often just a few thousand branches.
-
-* **Top-K stop**: generate combinations in descending size and halt after K matches.
-
-### Code Snippet
-
-```python
-from solution import Solution
-
-solver = Solution()
-results = solver.topKLongest(
-    target="72,409.53",
-    mustInclude=["-219.00","-823.05"],  # e.g. carry-forward disputes
-    numbers=[
-      "-56.94","-35.00","1022.12","8799.98", …  # your statement lines
-    ],
-    K=3,
-    indexOffset=8
-)
-# results now holds up to 3 of the longest matching subsets—
-# each with 'used', 'unused', 'length', and 'sum' keys.
+```pseudo
+found ← 0
+for r in n, n−1, …, 1:
+  for each combo of size r:
+    if valid(combo):
+      emit(combo)
+      if found+1 = K: stop
 ```
 
-By combining bitset DP, pruned backtracking, and a top-K stop condition, this tool turns an intractable **2^n** enumeration into a practical reconciliation assistant—perfect for matching autopayments against real-world credit-card statement data.
+* **Invariant I₁**: Before entering size=\$r\$, all valid combos of size >\$r\$ have been emitted or checked.
+* Therefore, when the first valid combo of size \$r\$ is emitted, no larger valid combo can appear later.
+* We stop after \$K\$ emissions, so we have exactly the top-\$K\$ by size.
+  ∎
 
+---
+
+## Theorem 4 (Termination & Bound on Emitted Count)
+
+The algorithm halts after at most \$\sum\_{r=1}^n \binom{n}{r}\$ iterations, or sooner once \$K\$ combos are found.
+
+**Proof.**
+
+* The outer loop runs \$n\$ times.
+* The inner loop for size \$r\$ runs \$\binom{n}{r}\$ times.
+* A global counter `found` is incremented on each emission.
+* Once `found == K`, both loops break.
+  ∎
+
+---
+
+## Complexity
+
+* **Time (worst-case):**
+  \$\displaystyle \sum\_{r=1}^n \binom{n}{r} \bigl(O(r)\text{ for must-include} + O(r)\text{ for sum}\bigr)=O(n2^n).\$
+
+* **Space:**
+  \$O(n)\$ extra (input arrays + one combination).
+
+---
+
+## Pseudocode with Loop Invariants
+
+```pseudo
+found ← 0
+for r from n down to 1:                             // Invariant: sizes >r are done
+  for each combo ∈ Combinations(range(n), r):      // Invariant: each size-r subset visited once
+    if combo contains M and sum(combo)=T:
+      emit(combo)
+      found ← found+1
+      if found = K: return                          // emit exactly K
+```
+
+* **Invariant A:** Before emitting, no larger valid combo remains un-emitted.
+* **Invariant B:** No duplicates are emitted (combination enumeration uniqueness).
