@@ -36,7 +36,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.title("🔢 Subset Sum Finder")
+st.title("Subset Sum Finder")
 st.markdown("Find the longest subsets of monetary values that exactly match a target sum, with optional required entries.")
 
 # Sidebar inputs
