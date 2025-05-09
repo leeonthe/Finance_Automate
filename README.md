@@ -2,7 +2,7 @@
 
 **Difficulty:** Hard
 
-**Tags:** Dynamic Programming, Backtracking, String Parsing, Combinatorics
+**Tags:**  Pseudo-Polynomial, Dynamic Programming, Backtracking, String Parsing, Subset Combinatorics
 
 ---
 
