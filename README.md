@@ -326,6 +326,47 @@ def top_k_longest(
 
 ---
 
+### ✅ Why Use Pseudo-Polynomial Optimization?
+
+In the worst case, checking all subsets requires brute-force enumeration of
+**2ⁿ subsets**—totally infeasible even for modest sizes (n ≈ 30–50).
+
+However, this algorithm dramatically improves performance using a **pseudo-polynomial time dynamic programming (DP)** strategy. Here's what that means:
+
+* Instead of exploring all possible subsets, we **track which sums are even possible** using a bitset-based DP table (called `suffix_dp`).
+* This DP is **not exponential in `n`**, but rather **O(n × T)**, where `T` is the target sum in cents.
+* That’s called **pseudo-polynomial time**—because the runtime depends on the **numeric value** of `T`, not its bit-length.
+
+#### ✅ Why this matters in practice:
+
+| Approach       | Time Complexity | Practical Feasibility          |
+| -------------- | --------------- | ------------------------------ |
+| Brute force    | O(n × 2ⁿ)       | Infeasible beyond n=25         |
+| Pseudo-poly DP | O(n × T)        | Fast when T is moderate (<10⁷) |
+
+For example:
+
+* Even with 50 transactions and a target of \$72,409.53 (i.e. 7,240,953 cents),
+* The algorithm only performs **hundreds of millions of bit-operations** instead of quadrillions of subset checks.
+
+### 💡 How It Works
+
+1. **Bitset DP** builds a compact summary of what sums are possible using each suffix of the input.
+2. **Backtracking** only explores paths that the DP proves can potentially reach the target.
+3. **"Must-include" enforcement** ensures required values are always used in valid combinations.
+4. **Top-K early stopping** ensures we never generate more than necessary.
+
+---
+
+### 🔍 What is Pseudo-Polynomial?
+
+A pseudo-polynomial time algorithm is one whose runtime depends on the **numeric value** of the input (like the target sum `T`), rather than its **bit-length**.
+In contrast to true polynomial time (which depends only on the size of the input), pseudo-polynomial algorithms can be fast in practice when input numbers are not too large.
+
+→ [What is pseudo-polynomial time? (Stack Overflow)](https://stackoverflow.com/questions/19647658/what-is-pseudopolynomial-time-how-does-it-differ-from-polynomial-time)
+
+---
+
 ### Correctness Proof
 
 **Definitions**
@@ -352,6 +393,8 @@ At call `dfs(idx,current_sum)`, if `suffix_dp[idx]` has no 1-bit at `offset+(T-c
 * **Exhaustiveness**: DFS visits every prefix unless pruned.
 * **Validity**: Only records combos summing to \$T\$ with all required values.
 * **Ordering**: Sort by length descending ensures top-K longest.  ∎
+
+
 
 ---
 
